@@ -11,7 +11,7 @@ from langchain_anthropic import ChatAnthropic
 load_dotenv()
 
 
-USE_FAKE_LLM = True
+USE_FAKE_LLM = False
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
 
