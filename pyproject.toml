@@ -10,4 +10,5 @@ dependencies = [
     "langchain-openai>=1.0.3",
     "python-dotenv>=1.2.1",
     "flask>=3.0.0",
+    "flask-cors>=4.0.0",
 ]

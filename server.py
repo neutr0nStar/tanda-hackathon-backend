@@ -3,6 +3,7 @@ from dataclasses import asdict
 from typing import Dict, List
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
+from flask_cors import CORS
 
 from main import (
     ConversationGraph,
@@ -16,6 +17,7 @@ from main import (
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret")
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 graph = ConversationGraph()
 root_id = graph.create_root(system_prompt="Answer concisely")
