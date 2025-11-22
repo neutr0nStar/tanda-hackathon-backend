@@ -2,7 +2,7 @@ import os
 from dataclasses import asdict
 from typing import Dict, List
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
 from main import (
     ConversationGraph,
@@ -131,6 +131,12 @@ def _set_llm_mode(mode: str) -> None:
     llm = create_llm()
 
 
+def _api_error(message: str, status: int = 400):
+    response = jsonify({"error": message})
+    response.status_code = status
+    return response
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     selected_node = request.args.get("node") or root_id
@@ -214,6 +220,125 @@ def index():
         svg=svg,
         llm_mode=llm_mode,
     )
+
+
+# ----------------------------- API ROUTES --------------------------------- #
+
+
+@app.get("/api/nodes")
+def api_list_nodes():
+    children = _build_children_index(graph)
+    payload = []
+    for node_id, node in graph.nodes.items():
+        payload.append(
+            {
+                "id": node_id,
+                "parent_id": node.parent_id,
+                "child_ids": sorted(children.get(node_id, [])),
+                "message_count": len(node.messages),
+            }
+        )
+    return jsonify({"nodes": sorted(payload, key=lambda n: n["id"])})
+
+
+@app.get("/api/nodes/<node_id>")
+def api_get_node(node_id: str):
+    try:
+        node = graph.get_node(node_id)
+    except KeyError:
+        return _api_error(f"Node {node_id} not found", 404)
+
+    children = _build_children_index(graph)
+    return jsonify(
+        {
+            "id": node.node_id,
+            "parent_id": node.parent_id,
+            "child_ids": sorted(children.get(node_id, [])),
+            "messages": [asdict(m) for m in node.messages],
+        }
+    )
+
+
+@app.post("/api/chat")
+def api_chat():
+    data = request.get_json(silent=True) or {}
+    node_id = data.get("node_id", root_id)
+    message = (data.get("message") or "").strip()
+    if not message:
+        return _api_error("message is required")
+
+    try:
+        response = chat(llm, graph, node_id, message)
+    except KeyError:
+        return _api_error(f"Node {node_id} not found", 404)
+    except Exception as exc:
+        return _api_error(str(exc))
+
+    return jsonify({"node_id": node_id, "response": response})
+
+
+@app.post("/api/branch")
+def api_branch():
+    data = request.get_json(silent=True) or {}
+    parent_id = data.get("parent_id", root_id)
+    new_id = data.get("new_id")
+    carry = bool(data.get("carry_messages", True))
+    seed = (data.get("seed_message") or "").strip()
+    additional = [("user", seed)] if seed else None
+
+    try:
+        branch_id = graph.branch_from(parent_id, new_id, carry_messages=carry, additional_messages=additional) # type: ignore
+    except KeyError:
+        return _api_error(f"Parent node {parent_id} not found", 404)
+    except Exception as exc:
+        return _api_error(str(exc))
+
+    return jsonify({"branch_id": branch_id, "parent_id": parent_id})
+
+
+@app.post("/api/merge")
+def api_merge():
+    data = request.get_json(silent=True) or {}
+    target = data.get("target_id", root_id)
+    source = data.get("source_id")
+    if not source:
+        return _api_error("source_id is required")
+
+    try:
+        merged = graph.merge_nodes(target, source)
+    except KeyError as exc:
+        return _api_error(str(exc), 404)
+    except Exception as exc:
+        return _api_error(str(exc))
+
+    return jsonify({"merged_id": merged})
+
+
+@app.post("/api/summarize_branch")
+def api_summarize_branch():
+    data = request.get_json(silent=True) or {}
+    source = data.get("source_id", root_id)
+    new_id = data.get("new_id")
+
+    try:
+        branch_id = summarize_and_branch(llm, graph, source, new_id)
+    except KeyError:
+        return _api_error(f"Node {source} not found", 404)
+    except Exception as exc:
+        return _api_error(str(exc))
+
+    return jsonify({"branch_id": branch_id, "source_id": source})
+
+
+@app.post("/api/llm_mode")
+def api_llm_mode():
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode")
+    if mode not in {"real", "fake"}:
+        return _api_error("mode must be 'real' or 'fake'")
+
+    _set_llm_mode(mode)
+    return jsonify({"llm_mode": llm_mode})
 
 
 if __name__ == "__main__":
