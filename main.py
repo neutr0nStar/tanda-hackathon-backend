@@ -116,8 +116,10 @@ class ConversationGraph:
         """Merge source into target in place, reparenting source's children.
 
         Rules:
-        - Merge is only allowed when one history is a prefix of the other.
-          If messages diverge after a shared prefix, it is treated as a conflict.
+        - If histories are identical, target remains unchanged.
+        - If one is a prefix of the other, the longer tail is kept.
+        - If histories are disjoint (e.g., branch created without context), source is appended.
+        - Otherwise, divergence after a shared prefix raises an error.
         - If source extends target, the extra source messages are appended to target.
           If target is already longer or equal and histories match, target is unchanged.
         - Children of the source node are reparented to the target before the source is deleted.
@@ -181,14 +183,14 @@ class ConversationGraph:
 
     @staticmethod
     def _merge_histories(target_msgs: List[Message], source_msgs: List[Message]) -> List[Message]:
-        """Merge two histories when one is a prefix of the other; otherwise raise."""
+        """Merge two histories with prefix detection and permissive append for fresh branches."""
 
         prefix_len = 0
         for m1, m2 in zip(target_msgs, source_msgs):
             if m1 == m2:
                 prefix_len += 1
             else:
-                raise ValueError("Cannot merge: histories diverge after shared prefix")
+                break
 
         if prefix_len == len(target_msgs) and prefix_len == len(source_msgs):
             return list(target_msgs)  # identical
@@ -200,6 +202,10 @@ class ConversationGraph:
         if prefix_len == len(source_msgs):
             # source is prefix; keep target as-is
             return list(target_msgs)
+
+        if prefix_len == 0:
+            # Completely disjoint (e.g., branch created without context); append source to target.
+            return list(target_msgs) + list(source_msgs)
 
         raise ValueError("Cannot merge: histories diverge after shared prefix")
 
