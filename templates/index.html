@@ -150,6 +150,21 @@
           <small style="color:var(--muted);">Disjoint histories append; divergent prefixes raise an error.</small>
           <button type="submit">Merge</button>
         </form>
+
+        <form method="post" class="form-card">
+          <h4>Summarize & Branch</h4>
+          <input type="hidden" name="action" value="summarize_branch">
+          <label>Source node</label>
+          <select name="summary_source">
+            {% for node in nodes %}
+              <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
+            {% endfor %}
+          </select>
+          <label>New branch id (optional)</label>
+          <input type="text" name="summary_name" placeholder="SUMMARY-xyz">
+          <small style="color:var(--muted);">Creates a new branch with only a concise summary of the source.</small>
+          <button type="submit">Summarize & Branch</button>
+        </form>
       </div>
     </div>
 

@@ -10,6 +10,7 @@ from main import (
     MessageRole,
     chat,
     create_llm,
+    summarize_and_branch,
     set_use_fake_llm,
 )
 
@@ -173,6 +174,13 @@ def index():
                     merged_id = graph.merge_nodes(target, source)
                     flash(f"Merged {source} into {target} (result: {merged_id}).", "success")
                     selected_node = merged_id
+
+            elif action == "summarize_branch":
+                source = request.form.get("summary_source", selected_node)
+                new_id = request.form.get("summary_name") or None
+                branch_id = summarize_and_branch(llm, graph, source, new_id)
+                flash(f"Created summarized branch {branch_id} from {source}.", "success")
+                selected_node = branch_id
 
             elif action == "llm_mode":
                 new_mode = request.form.get("llm_mode")

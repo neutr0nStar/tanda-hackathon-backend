@@ -1,3 +1,4 @@
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ load_dotenv()
 
 USE_FAKE_LLM = False
 DEFAULT_MODEL = "claude-sonnet-4-5"
+SUMMARY_PROMPT = "Summarize the conversation so far into a concise, factual bullet list (<=120 words)."
 
 
 def set_use_fake_llm(use_fake: bool) -> None:
@@ -161,7 +163,7 @@ class ConversationGraph:
         print("\n=== Conversation Graph ===\n")
         for node in ordered:
             depth = depths[node.node_id]
-            indent = "  " * depth
+            indent = "\t" * depth
             print(f"{indent}- Node ID: {node.node_id}")
             print(f"{indent}  Parent: {node.parent_id}")
             print(f"{indent}  Messages:")
@@ -243,6 +245,30 @@ def chat(llm: BaseChatModel, graph: ConversationGraph, node_id: str, user_input:
     response = llm.invoke(build_context(graph, node_id))
     graph.add_message(node_id, "assistant", response.content)  # type: ignore[arg-type]
     return response.content  # type: ignore[arg-type]
+
+
+def summarize_and_branch(
+    llm: BaseChatModel,
+    graph: ConversationGraph,
+    node_id: str,
+    new_id: Optional[str] = None,
+) -> str:
+    """Summarize a branch and create a new branch seeded with only the summary."""
+
+    # Build context and ask for a concise summary
+    ctx = build_context(graph, node_id)
+    summary_msg = llm.invoke(ctx + [HumanMessage(content=SUMMARY_PROMPT)])
+
+    suffix = node_id.split("-")[-1] if "-" in node_id else node_id
+    branch_name = new_id or f"SUMM-{suffix}"
+
+    branch_id = graph.branch_from(
+        node_id,
+        branch_name,
+        carry_messages=False,
+        additional_messages=[("assistant", summary_msg.content)],  # type: ignore[list-item]
+    )
+    return branch_id
 
 
 def print_graph(graph: ConversationGraph) -> None:
