@@ -5,7 +5,7 @@ from typing import Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
 from langchain.chat_models.base import BaseChatModel # type: ignore
-from langchain.messages import AIMessage, HumanMessage
+from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_anthropic import ChatAnthropic
 
 load_dotenv()
@@ -13,6 +13,13 @@ load_dotenv()
 
 USE_FAKE_LLM = False
 DEFAULT_MODEL = "claude-sonnet-4-5"
+
+
+def set_use_fake_llm(use_fake: bool) -> None:
+    """Toggle the fake LLM flag (affects subsequent create_llm calls)."""
+
+    global USE_FAKE_LLM
+    USE_FAKE_LLM = use_fake
 
 
 class DummyChatAnthropic:
@@ -38,7 +45,7 @@ def create_llm(api_key: Optional[str] = None, model: str = DEFAULT_MODEL) -> Bas
     return ChatAnthropic(model=model, api_key=key)  # type: ignore[arg-type]
 
 
-MessageRole = Literal["user", "assistant"]
+MessageRole = Literal["user", "assistant", "system"]
 
 
 @dataclass
@@ -63,10 +70,14 @@ class ConversationGraph:
     def __init__(self) -> None:
         self.nodes: Dict[str, ChatNode] = {}
 
-    def create_root(self, node_id: str = "ROOT") -> str:
-        """Create the root node for a conversation tree."""
+    def create_root(self, node_id: str = "ROOT", system_prompt: Optional[str] = None) -> str:
+        """Create the root node for a conversation tree with optional system prompt."""
 
-        node = ChatNode(node_id=node_id, parent_id=None)
+        messages: List[Message] = []
+        if system_prompt:
+            messages.append(Message(role="system", content=system_prompt))
+
+        node = ChatNode(node_id=node_id, parent_id=None, messages=messages)
         self.nodes[node_id] = node
         return node_id
 
@@ -210,13 +221,15 @@ class ConversationGraph:
         raise ValueError("Cannot merge: histories diverge after shared prefix")
 
 
-def build_context(graph: ConversationGraph, node_id: str) -> List[HumanMessage | AIMessage]:
+def build_context(graph: ConversationGraph, node_id: str) -> List[HumanMessage | AIMessage | SystemMessage]:
     """Translate stored messages into LangChain message objects."""
 
     node = graph.get_node(node_id)
-    msgs: List[HumanMessage | AIMessage] = []
+    msgs: List[HumanMessage | AIMessage | SystemMessage] = []
     for m in node.messages:
-        if m.role == "user":
+        if m.role == "system":
+            msgs.append(SystemMessage(content=m.content))
+        elif m.role == "user":
             msgs.append(HumanMessage(content=m.content))
         else:
             msgs.append(AIMessage(content=m.content))
@@ -246,7 +259,7 @@ def run_demo() -> None:
 
     llm = create_llm()
     graph = ConversationGraph()
-    root = graph.create_root()
+    root = graph.create_root(system_prompt="Respond concisely.")
 
     print(chat(llm, graph, root, "Explain quantum computing simply."))
     print_graph(graph)

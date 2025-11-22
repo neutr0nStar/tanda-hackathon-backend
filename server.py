@@ -2,7 +2,7 @@ import os
 from dataclasses import asdict
 from typing import Dict, List
 
-from flask import Flask, flash, redirect, render_template_string, request, url_for
+from flask import Flask, flash, redirect, render_template, request, url_for
 
 from main import (
     ConversationGraph,
@@ -10,13 +10,16 @@ from main import (
     MessageRole,
     chat,
     create_llm,
+    set_use_fake_llm,
 )
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret")
 
 graph = ConversationGraph()
-root_id = graph.create_root()
+root_id = graph.create_root(system_prompt="Answer concisely")
+llm_mode = "fake" if os.getenv("USE_FAKE_LLM") == "1" else "real"
+set_use_fake_llm(llm_mode == "fake")
 llm = create_llm()
 
 
@@ -69,7 +72,7 @@ def _render_svg(graph: ConversationGraph, highlight: str) -> str:
     for nodes in layers.values():
         nodes.sort()
 
-    x_spacing, y_spacing, radius = 160, 120, 48
+    x_spacing, y_spacing, radius = 160, 120, 32
     coords: Dict[str, tuple[int, int]] = {}
 
     for depth in sorted(layers):
@@ -107,7 +110,7 @@ def _render_svg(graph: ConversationGraph, highlight: str) -> str:
             f'<circle cx="{x}" cy="{y}" r="{radius}" fill="{fill}" stroke="{stroke}" stroke-width="2" />'
         )
         lines.append(
-            f'<text x="{x}" y="{y+5}" text-anchor="middle" font-size="10" '
+            f'<text x="{x}" y="{y+3}" text-anchor="middle" font-size="6" '
             f'font-family="Arial" fill="{ "#fff" if active else "#000"}">{node_id}</text>'
         )
 
@@ -118,6 +121,13 @@ def _render_svg(graph: ConversationGraph, highlight: str) -> str:
 def _serialize_messages(node_id: str) -> List[Dict[str, str]]:
     node = graph.get_node(node_id)
     return [asdict(m) for m in node.messages]
+
+
+def _set_llm_mode(mode: str) -> None:
+    global llm, llm_mode
+    llm_mode = mode
+    set_use_fake_llm(mode == "fake")
+    llm = create_llm()
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -164,6 +174,14 @@ def index():
                     flash(f"Merged {source} into {target} (result: {merged_id}).", "success")
                     selected_node = merged_id
 
+            elif action == "llm_mode":
+                new_mode = request.form.get("llm_mode")
+                if new_mode not in {"real", "fake"}:
+                    flash("Choose a valid LLM mode.", "warning")
+                else:
+                    _set_llm_mode(new_mode)
+                    flash(f"Switched LLM to {new_mode.upper()}.", "success")
+
             else:
                 flash("Unknown action.", "warning")
         except Exception as exc:  # broad for user feedback
@@ -179,135 +197,15 @@ def index():
     tree = _render_tree(graph)
     svg = _render_svg(graph, selected_node)
 
-    return render_template_string(
-        TEMPLATE,
+    return render_template(
+        "index.html",
         nodes=available_nodes,
         selected_node=selected_node,
         messages=messages,
         tree=tree,
         svg=svg,
+        llm_mode=llm_mode,
     )
-
-
-TEMPLATE = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Conversation Graph UI</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 1.5rem; display: flex; gap: 1.5rem; }
-    .column { flex: 1; min-width: 320px; }
-    form { margin-bottom: 1rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; }
-    textarea, select, input[type=text] { width: 100%; box-sizing: border-box; }
-    pre { background: #f6f6f6; padding: 1rem; border-radius: 8px; overflow-x: auto; }
-    .messages { list-style: none; padding-left: 0; }
-    .messages li { margin-bottom: 0.5rem; }
-    .role-user { color: #0a7; }
-    .role-assistant { color: #06c; }
-    .flash { padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; }
-    .flash.info { background: #e8f3ff; }
-    .flash.success { background: #e8f7e8; }
-    .flash.warning { background: #fff7e0; }
-    .flash.danger { background: #ffe8e8; }
-  </style>
-</head>
-<body>
-  <div class="column">
-    <form method="get">
-      <h3>Switch Node</h3>
-      <label>Active node</label>
-      <select name="node">
-        {% for node in nodes %}
-          <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit">Switch</button>
-    </form>
-
-    {% with msgs = get_flashed_messages(with_categories=true) %}
-      {% if msgs %}
-        {% for category, message in msgs %}
-          <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
-    <form method="post">
-      <h3>Chat</h3>
-      <input type="hidden" name="action" value="chat">
-      <label>Node</label>
-      <select name="chat_node">
-        {% for node in nodes %}
-          <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
-        {% endfor %}
-      </select>
-      <label>Message</label>
-      <textarea name="user_input" rows="3" placeholder="Ask something..."></textarea>
-      <button type="submit">Send</button>
-    </form>
-
-    <form method="post">
-      <h3>Branch</h3>
-      <input type="hidden" name="action" value="branch">
-      <label>Parent node</label>
-      <select name="branch_parent">
-        {% for node in nodes %}
-          <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
-        {% endfor %}
-      </select>
-      <label>New branch id (optional)</label>
-      <input type="text" name="branch_name" placeholder="BRANCH-xyz">
-      <label><input type="checkbox" name="carry_messages" checked> Carry existing messages</label>
-      <label>Seed message (optional, user)</label>
-      <textarea name="branch_seed" rows="2" placeholder="Seed the branch with user context"></textarea>
-      <button type="submit">Create branch</button>
-    </form>
-
-    <form method="post">
-      <h3>Merge</h3>
-      <input type="hidden" name="action" value="merge">
-      <label>Target (kept)</label>
-      <select name="merge_target">
-        {% for node in nodes %}
-          <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
-        {% endfor %}
-      </select>
-      <label>Source (merged into target)</label>
-      <select name="merge_source">
-        <option value="">-- choose --</option>
-        {% for node in nodes %}
-          {% if node != selected_node %}
-          <option value="{{ node }}">{{ node }}</option>
-          {% endif %}
-        {% endfor %}
-      </select>
-      <button type="submit">Merge</button>
-      <p><small>Merge allowed only if histories share a prefix; otherwise an error is shown.</small></p>
-    </form>
-  </div>
-
-  <div class="column">
-    <h3>Selected Node: {{ selected_node }}</h3>
-    <ul class="messages">
-      {% if messages %}
-        {% for m in messages %}
-          <li class="role-{{ m.role }}"><strong>[{{ m.role }}]</strong> {{ m.content }}</li>
-        {% endfor %}
-      {% else %}
-        <li>(no messages)</li>
-      {% endif %}
-    </ul>
-
-    <h3>Conversation Graph</h3>
-    <pre>{{ tree }}</pre>
-    <div style="margin-top:1rem; border:1px solid #ddd; border-radius:8px; padding:0.5rem; background:#fafafa;">
-      {{ svg|safe }}
-    </div>
-  </div>
-</body>
-</html>
-"""
 
 
 if __name__ == "__main__":

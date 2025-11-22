@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Conversation Graph UI</title>
+  <style>
+    :root {
+      --bg: linear-gradient(135deg, #f9fbff 0%, #eef2ff 50%, #f8fbff 100%);
+      --card: #ffffff;
+      --border: #e4e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-soft: #e0e7ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 1.25rem 1.5rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.8); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
+    h1 { margin: 0; font-size: 1.4rem; letter-spacing: -0.01em; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1rem 1.25rem; box-shadow: 0 10px 30px rgba(15,23,42,0.05); }
+    form { display: flex; flex-direction: column; gap: 0.5rem; }
+    textarea, select, input[type=text] { width: 100%; padding: 0.5rem 0.65rem; border-radius: 10px; border: 1px solid var(--border); background: #f8fafc; font-size: 0.95rem; }
+    textarea:focus, select:focus, input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+    button { background: var(--accent); color: #fff; border: none; border-radius: 10px; padding: 0.6rem 0.9rem; font-weight: 600; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+    button:hover { transform: translateY(-1px); box-shadow: 0 10px 20px rgba(37,99,235,0.2); }
+    button.secondary { background: #e2e8f0; color: #0f172a; }
+    label { font-weight: 600; font-size: 0.9rem; color: var(--muted); }
+    pre { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 12px; overflow-x: auto; }
+    .messages { list-style: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .messages li { padding: 0.6rem 0.75rem; border-radius: 10px; background: #f8fafc; border: 1px solid var(--border); }
+    .role-user { border-left: 4px solid #0ea5e9; }
+    .role-assistant { border-left: 4px solid #a855f7; }
+    .flash { padding: 0.65rem 0.8rem; margin-bottom: 0.5rem; border-radius: 10px; font-weight: 600; }
+    .flash.info { background: #e0f2fe; color: #0c4a6e; }
+    .flash.success { background: #dcfce7; color: #166534; }
+    .flash.warning { background: #fef9c3; color: #854d0e; }
+    .flash.danger { background: #fee2e2; color: #991b1b; }
+    .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.6rem; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 0.85rem; }
+    .grid-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; }
+    .graph-box { border: 1px solid var(--border); border-radius: 12px; background: #f8fafc; padding: 0.75rem; }
+    .graph-box svg { width: 100%; height: auto; }
+    .form-card { background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; padding: 0.75rem 1rem; }
+    .form-card h4 { margin: 0; font-size: 1rem; }
+    .tabs { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    .tab-btn { padding: 0.45rem 0.9rem; border-radius: 10px; border: 1px solid var(--border); background: #eef2ff; color: var(--text); cursor: pointer; font-weight: 700; }
+    .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .tab-panel { display: none; margin-top: 1rem; }
+    .tab-panel.active { display: block; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } header { flex-direction: column; align-items: flex-start; gap: 0.5rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Conversation Graph UI</h1>
+      <div class="pill">LLM: {{ llm_mode.upper() }}</div>
+    </div>
+    <form method="post" style="display:flex; gap:0.5rem; align-items:center; margin:0;">
+      <input type="hidden" name="action" value="llm_mode">
+      <label style="margin:0;">Backend</label>
+      <select name="llm_mode" style="width:auto; min-width:140px;">
+        <option value="real" {% if llm_mode == "real" %}selected{% endif %}>Real (Anthropic)</option>
+        <option value="fake" {% if llm_mode == "fake" %}selected{% endif %}>Fake (&lt;&lt;AI Res&gt;&gt;)</option>
+      </select>
+      <button type="submit" class="secondary">Switch</button>
+    </form>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="section-title">
+        <h3>Navigation & Chat</h3>
+        <span class="pill">{{ selected_node }}</span>
+      </div>
+
+      {% with msgs = get_flashed_messages(with_categories=true) %}
+        {% if msgs %}
+          {% for category, message in msgs %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <div class="grid-two">
+        <form method="get" class="form-card">
+          <h4>Switch</h4>
+          <input type="hidden" name="action" value="switch">
+          <label>Active node</label>
+          <select name="node">
+            {% for node in nodes %}
+              <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="secondary">Switch</button>
+        </form>
+
+        <form method="post" class="form-card">
+          <h4>Chat</h4>
+          <input type="hidden" name="action" value="chat">
+          <label>Node</label>
+          <select name="chat_node">
+            {% for node in nodes %}
+              <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
+            {% endfor %}
+          </select>
+          <label>Message</label>
+          <textarea name="user_input" rows="3" placeholder="Ask something..."></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </div>
+
+      <div class="grid-two" style="margin-top:1rem;">
+        <form method="post" class="form-card">
+          <h4>Branch</h4>
+          <input type="hidden" name="action" value="branch">
+          <label>Parent node</label>
+          <select name="branch_parent">
+            {% for node in nodes %}
+              <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
+            {% endfor %}
+          </select>
+          <label>New branch id (optional)</label>
+          <input type="text" name="branch_name" placeholder="BRANCH-xyz">
+          <label><input type="checkbox" name="carry_messages" checked> Carry existing messages</label>
+          <label>Seed message (optional, user)</label>
+          <textarea name="branch_seed" rows="2" placeholder="Seed the branch with user context"></textarea>
+          <button type="submit">Create branch</button>
+        </form>
+
+        <form method="post" class="form-card">
+          <h4>Merge</h4>
+          <input type="hidden" name="action" value="merge">
+          <label>Target (kept)</label>
+          <select name="merge_target">
+            {% for node in nodes %}
+              <option value="{{ node }}" {% if node == selected_node %}selected{% endif %}>{{ node }}</option>
+            {% endfor %}
+          </select>
+          <label>Source (merged into target)</label>
+          <select name="merge_source">
+            <option value="">-- choose --</option>
+            {% for node in nodes %}
+              {% if node != selected_node %}
+              <option value="{{ node }}">{{ node }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <small style="color:var(--muted);">Disjoint histories append; divergent prefixes raise an error.</small>
+          <button type="submit">Merge</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">
+        <h3>Node Views</h3>
+        <span class="pill">Node: {{ selected_node }}</span>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="conversation">Conversation</button>
+        <button class="tab-btn" data-tab="graph">Graph & Branches</button>
+      </div>
+
+      <div id="conversation" class="tab-panel active">
+        <ul class="messages" style="margin-top:0.75rem;">
+          {% if messages %}
+            {% for m in messages %}
+              <li class="role-{{ m.role }}"><strong>[{{ m.role }}]</strong> {{ m.content }}</li>
+            {% endfor %}
+          {% else %}
+            <li>(no messages)</li>
+          {% endif %}
+        </ul>
+      </div>
+
+      <div id="graph" class="tab-panel">
+        <div class="graph-box">
+          {{ svg|safe }}
+        </div>
+        <pre style="margin-top:0.75rem;">{{ tree }}</pre>
+      </div>
+    </div>
+  </main>
+  <script>
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const panels = document.querySelectorAll('.tab-panel');
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabButtons.forEach(b => b.classList.remove('active'));
+        panels.forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        const target = btn.dataset.tab;
+        document.getElementById(target)?.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>
